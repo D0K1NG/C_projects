@@ -11,6 +11,8 @@
 
 #define ARR_SIZE(x)         sizeof(x)/sizeof(x[0])
 #define BACKGROUND          ' '
+#define TRESHOLD            0.001f
+#define COLOR_EN            0x40
 #define HORIZ_OFFSET        0.0f
 #define VERT_OFFSET         0.0f
 #define INCREMENT_SPEED     1.0f
@@ -38,12 +40,19 @@ struct print_data {
 
 void print_states(struct print_data *out)
 {
-    printf("distance: %d\n", out->cam_distance);
-    printf("window width: %d\n", out->window_width);
-    printf("fov: %d\n", out->fov);
-    printf("quality: %d\n", out->quality);
-    printf("speed: %d\n", out->speed);
-    printf("cube dimensions: %d\n", out->cube_dimension);
+    printf("\x1b[1mParameters:\x1b[0m\n"
+        "\tdistance: %d\n"
+        "\twindow width: %d\n"
+        "\tfov: %d\n"
+        "\tquality: %d\n"
+        "\tspeed: %d\n"
+        "\tcube dimensions: %d\n",
+        out->cam_distance,
+        out->window_width,
+        out->fov,
+        out->quality,
+        out->speed,
+        out->cube_dimension);
 }
 
 void help_page(int limits[][3])
@@ -59,10 +68,10 @@ void help_page(int limits[][3])
             "\t-d, --distance - specify camera distance from cube [%d, %d]\n"
             "\t-w, --width - specify width of cube sreen [%d, %d]\n"
             "\t-f, --fov - specify field of view [%d, %d]\n"
-            "\t-q, --quality - define fineness of rotation [%d, %d]\n"
+            "\t-q, --quality - define num of deg. per iteration [%d, %d]\n"
             "\t-s, --speed - define speed of rotation [%d, %d]\n"
             "\t-x, --dimension - define cube dimension [%d, %d]\n"
-            "\t-c, --color - picka a color\n\n"
+            "\t-c, --color - pick a color\n\n"
             "\t\t1. b, blue\n"
             "\t\t2. g, green\n"
             "\t\t3. r, red\n"
@@ -214,7 +223,7 @@ int cube_cli(int argc, char **argv, struct print_data **out)
             break;
         case 'c':
             color = optarg;
-            setup_color(color);
+            flags |= 1 << 6;
             break;
         case 'h':
             help_page(limits);
@@ -229,6 +238,9 @@ int cube_cli(int argc, char **argv, struct print_data **out)
     check_for_limits(flags, limits, args, ARR_SIZE(args));
     *out = setup(args);
     print_states(*out);
+    if (flags & COLOR_EN) {
+        setup_color(color);
+    }
 
     return 0;
 }
@@ -286,7 +298,7 @@ float calc_z(float x, float y, float z)
     return z * cos(A) * cos(B) - x * sin(B) + y * cos(B) * sin(A);
 }
 
-void rotate_point(float x, float y, float z, int ch,struct print_data *out)
+void rotate_point(float x, float y, float z, int ch, struct print_data *out)
 {
     float dx, dy, dz, ooz;
     int xp, yp, idx;
@@ -295,16 +307,13 @@ void rotate_point(float x, float y, float z, int ch,struct print_data *out)
     dy = calc_y(x, y, z);
     dz = calc_z(x, y, z) + out->cam_distance;
 
-    if (dz <= 0)
-        return;
-
-    ooz = 1/dz;
-    xp = ((float)out->window_width/2.0f + HORIZ_OFFSET + (float)out->fov * dx * ooz * 2.0f);
-    yp = ((float)out->window_height/2.0f + VERT_OFFSET + (float)out->fov * dy * ooz);
+    ooz = 1.0f/dz;
+    xp = (int)((float)out->window_width/2.0f + HORIZ_OFFSET + (float)out->fov * dx * ooz * 2.0f);
+    yp = (int)((float)out->window_height/2.0f + VERT_OFFSET + (float)out->fov * dy * ooz);
     idx = xp + yp * out->window_width;
 
     if (idx >= 0 && idx < out->window_dim) {
-        if (ooz > out->ZBuffer[idx]) {
+        if ((ooz - out->ZBuffer[idx]) > TRESHOLD) {
             out->ZBuffer[idx] = ooz;
             out->visible_surface[idx] = ch;
         }
@@ -317,14 +326,14 @@ void rotation_quality(float A_deg_incr, float B_deg_incr, float C_deg_incr)
         B += DEG_TO_RAD(B_deg_incr);
         C += DEG_TO_RAD(C_deg_incr);
 
-        if (RAD_TO_DEG(A) > 360) {
-            A -=360;
+        if (A > 2*PI) {
+            A -= 2*PI;
         }
-        if (RAD_TO_DEG(B) > 360) {
-            B -=360;
+        if (B > 2*PI) {
+            B -= 2*PI;
         }
-        if (RAD_TO_DEG(C) > 360) {
-            C -=360;
+        if (C > 2*PI) {
+            C -= 2*PI;
         }
 }
 
@@ -348,9 +357,9 @@ int main(int argc, char **argv)
     }
 
     cube_d = out->cube_dimension;
-    get_center_of_terminal(&cent_row, &cent_col, out);
     printf("\x1b[2J");
     printf("\x1b[H");
+    get_center_of_terminal(&cent_row, &cent_col, out);
 
     for (;;) {
         printf("\x1b[%d;%dH", cent_row, cent_col);
@@ -372,7 +381,7 @@ int main(int argc, char **argv)
             putchar(i % out->window_width ? out->visible_surface[i] : '\n');
         }
 
-        rotation_quality(2, 2, 2);
+        rotation_quality(out->quality, out->quality, out->quality);
         usleep(MILISEC_TO_MICROSEC(30));
     }
 
